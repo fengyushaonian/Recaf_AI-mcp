@@ -144,21 +144,28 @@ public class McpUiBridge {
 	@Nonnull
 	private String describeCurrentView() {
 		Map<String, Object> view = new LinkedHashMap<>();
-		ClassPathNode active = activeClassPath();
-		view.put("activeClass", active == null ? null : active.getValue().getName());
+		try {
+			ClassPathNode active = activeClassPath();
+			view.put("activeClass", active == null ? null : active.getValue().getName());
 
-		if (active != null) {
-			Map<String, Object> caret = new LinkedHashMap<>();
-			Editor editor = activeEditor();
-			if (editor != null) {
-				CodeArea area = editor.getCodeArea();
-				caret.put("line", area.getCurrentParagraph() + 1);
-				caret.put("position", area.getCaretPosition());
-				String selected = area.getSelectedText();
-				caret.put("selectionLength", selected == null ? 0 : selected.length());
-				caret.put("selection", selected == null ? "" : limit(selected, 4000));
+			if (active != null) {
+				Map<String, Object> caret = new LinkedHashMap<>();
+				Editor editor = activeEditor();
+				if (editor != null) {
+					CodeArea area = editor.getCodeArea();
+					caret.put("line", area.getCurrentParagraph() + 1);
+					caret.put("position", area.getCaretPosition());
+					String selected = area.getSelectedText();
+					caret.put("selectionLength", selected == null ? 0 : selected.length());
+					caret.put("selection", selected == null ? "" : limit(selected, 4000));
+				}
+				view.put("caret", caret);
 			}
-			view.put("caret", caret);
+		} catch (Throwable t) {
+			// The UI can be in a transitional state (no workspace open, layout being rebuilt, ...).
+			// Report what we have instead of failing the tool call.
+			logger.debug("Failed to read the active editor state", t);
+			view.put("uiError", t.toString());
 		}
 
 		List<String> tabs = new ArrayList<>();
@@ -177,8 +184,18 @@ public class McpUiBridge {
 	}
 
 	@Nullable
+	private DockContainerLeaf primaryContainer() {
+		try {
+			return dockingManager.getPrimaryDockingContainer();
+		} catch (Throwable t) {
+			logger.debug("Primary docking container is not available", t);
+			return null;
+		}
+	}
+
+	@Nullable
 	private ClassPathNode activeClassPath() {
-		DockContainerLeaf leaf = dockingManager.getPrimaryDockingContainer();
+		DockContainerLeaf leaf = primaryContainer();
 		if (leaf == null)
 			return null;
 		Dockable selected = leaf.getSelectedDockable();
@@ -198,7 +215,7 @@ public class McpUiBridge {
 	 */
 	@Nullable
 	private Editor activeEditor() {
-		DockContainerLeaf leaf = dockingManager.getPrimaryDockingContainer();
+		DockContainerLeaf leaf = primaryContainer();
 		if (leaf == null)
 			return null;
 		Dockable selected = leaf.getSelectedDockable();
