@@ -86,7 +86,7 @@ public class McpPlatform {
 		for (WorkspaceResource resource : workspace.getSupportingResources())
 			supporting.add(describeResource(resource));
 		info.put("supportingResources", supporting);
-		info.put("classCount", (int) workspace.jvmClassesStream(false).count());
+		info.put("classCount", (int) workspace.classesStream(false).count());
 		info.put("fileCount", (int) workspace.filesStream().count());
 		info.put("javacAvailable", JavacCompiler.isAvailable());
 		return McpToolResult.ok(GSON.toJson(info));
@@ -107,7 +107,7 @@ public class McpPlatform {
 		int max = clamp(limit, 1, 2000);
 
 		List<Object> classes = new ArrayList<>();
-		workspace.jvmClassesStream(false)
+		workspace.classesStream(false)
 				.map(ClassPathNode::getValue)
 				.filter(info -> needle.isEmpty() || info.getName().toLowerCase().contains(needle))
 				.sorted(Comparator.comparing(ClassInfo::getName))
@@ -141,7 +141,7 @@ public class McpPlatform {
 		}
 
 		int max = clamp(limit, 1, 500);
-		List<String> matches = workspaceManager.getCurrent().jvmClassesStream(false)
+		List<String> matches = workspaceManager.getCurrent().classesStream(false)
 				.map(ClassPathNode::getValue)
 				.map(ClassInfo::getName)
 				.filter(name -> pattern.matcher(name).find())
@@ -171,7 +171,7 @@ public class McpPlatform {
 		String match = needle.toLowerCase();
 		int max = clamp(limit, 1, 500);
 		List<Map<String, Object>> matches = new ArrayList<>();
-		workspaceManager.getCurrent().jvmClassesStream(false)
+		workspaceManager.getCurrent().classesStream(false)
 				.map(ClassPathNode::getValue)
 				.sorted(Comparator.comparing(ClassInfo::getName))
 				.forEach(info -> {
@@ -208,14 +208,15 @@ public class McpPlatform {
 		if (path == null)
 			return null;
 
-		JvmClassInfo info = path.getValue().asJvmClass();
+		ClassInfo info = path.getValue();
 		Workspace workspace = path.getValueOfType(Workspace.class);
 		if (workspace == null)
 			return null;
 
 		try {
-			DecompileResult result = decompilerManager.decompile(workspace, info)
-					.get(45, TimeUnit.SECONDS);
+			DecompileResult result = info.isJvmClass()
+					? decompilerManager.decompile(workspace, info.asJvmClass()).get(45, TimeUnit.SECONDS)
+					: decompilerManager.decompile(workspace, info.asAndroidClass()).get(45, TimeUnit.SECONDS);
 			String text = result.getText();
 			if (text == null)
 				return new SourceView(info, null, result.getException());
@@ -238,6 +239,9 @@ public class McpPlatform {
 		ClassPathNode path = resolve(name);
 		if (path == null)
 			return McpToolResult.fail("Class not found in workspace: " + name);
+		if (!path.getValue().isJvmClass())
+			return McpToolResult.fail("Raw byte access is only supported for JVM classes. " +
+					"'" + name + "' lives in a DEX container.");
 
 		JvmClassInfo info = path.getValue().asJvmClass();
 		byte[] bytecode = info.getBytecode();
@@ -265,6 +269,9 @@ public class McpPlatform {
 		ClassPathNode path = resolve(name);
 		if (path == null)
 			return McpToolResult.fail("Class not found in workspace: " + name);
+		if (!path.getValue().isJvmClass())
+			return McpToolResult.fail("'" + name + "' is an Android/DEX class. Java source recompilation is only " +
+					"supported for JVM classes. Use the Android assembler tab in Recaf for this class.");
 		if (!JavacCompiler.isAvailable())
 			return McpToolResult.fail("No 'javac' compiler available in this runtime. Use 'replace_bytes' instead.");
 
@@ -368,6 +375,9 @@ public class McpPlatform {
 		ClassPathNode path = resolve(name);
 		if (path == null)
 			return McpToolResult.fail("Class not found in workspace: " + name);
+		if (!path.getValue().isJvmClass())
+			return McpToolResult.fail("'" + name + "' is an Android/DEX class. Raw JVM bytecode replacement is not " +
+					"applicable. Use the Android assembler tab in Recaf for this class.");
 
 		JvmClassInfo info = path.getValue().asJvmClass();
 		Workspace workspace = path.getValueOfType(Workspace.class);
@@ -426,9 +436,14 @@ public class McpPlatform {
 	@Nullable
 	public ClassPathNode resolve(@Nonnull String name) {
 		String normalized = normalize(name);
-		ClassPathNode path = workspaceManager.getCurrent().findJvmClass(normalized);
+		Workspace workspace = workspaceManager.getCurrent();
+		ClassPathNode path = workspace.findJvmClass(normalized);
 		if (path == null)
-			path = workspaceManager.getCurrent().findJvmClass(name.trim());
+			path = workspace.findAndroidClass(normalized);
+		if (path == null)
+			path = workspace.findJvmClass(name.trim());
+		if (path == null)
+			path = workspace.findAndroidClass(name.trim());
 		return path;
 	}
 
@@ -487,8 +502,11 @@ public class McpPlatform {
 			return "";
 		try {
 			int classes = resource.getJvmClassBundle().size();
+			int android = resource.getAndroidClassBundles().values().stream()
+					.mapToInt(bundle -> bundle.size()).sum();
 			int files = resource.getFileBundle().size();
-			return resource.getClass().getSimpleName() + " (classes=" + classes + ", files=" + files + ")";
+			return resource.getClass().getSimpleName()
+					+ " (classes=" + classes + ", androidClasses=" + android + ", files=" + files + ")";
 		} catch (Throwable t) {
 			return resource.getClass().getSimpleName();
 		}
@@ -508,12 +526,19 @@ public class McpPlatform {
 	 * @param error
 	 * 		Failure cause, or {@code null} on success.
 	 */
-	public record SourceView(@Nonnull JvmClassInfo info, @Nullable String source, @Nullable Throwable error) {
+	public record SourceView(@Nonnull ClassInfo info, @Nullable String source, @Nullable Throwable error) {
 		/**
 		 * @return {@code true} when the source was produced.
 		 */
 		public boolean isSuccess() {
 			return source != null;
+		}
+
+		/**
+		 * @return {@code true} when the class is a JVM class and not a DEX class.
+		 */
+		public boolean isJvm() {
+			return info.isJvmClass();
 		}
 	}
 }

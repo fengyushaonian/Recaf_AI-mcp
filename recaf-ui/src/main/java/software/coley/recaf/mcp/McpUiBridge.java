@@ -22,8 +22,8 @@ import software.coley.recaf.services.navigation.Navigable;
 import software.coley.recaf.services.navigation.NavigationManager;
 import software.coley.recaf.ui.control.richtext.Editor;
 import software.coley.recaf.ui.docking.DockingManager;
+import software.coley.recaf.ui.pane.editing.AbstractDecompilePane;
 import software.coley.recaf.ui.pane.editing.ClassPane;
-import software.coley.recaf.ui.pane.editing.jvm.JvmDecompilerPane;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -190,8 +190,8 @@ public class McpUiBridge {
 		Node node = selected.getNode();
 		if (node instanceof ClassPane classPane) {
 			Node display = classPane.getDisplay();
-			if (display instanceof JvmDecompilerPane decompilerPane)
-				return decompilerPane.getEditor();
+			if (display instanceof AbstractDecompilePane decompilePane)
+				return decompilePane.getEditor();
 		}
 		return null;
 	}

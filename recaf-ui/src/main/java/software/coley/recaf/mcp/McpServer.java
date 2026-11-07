@@ -496,7 +496,10 @@ public class McpServer {
 		sb.append("Class: ").append(view.info().getName()).append('\n');
 		sb.append("Fields: ").append(view.info().getFields().size())
 				.append(", Methods: ").append(view.info().getMethods().size())
-				.append(", Version: ").append(view.info().getVersion()).append('\n');
+				.append(", Kind: ").append(view.isJvm() ? "jvm" : "android");
+		if (view.isJvm())
+			sb.append(", Version: ").append(view.info().asJvmClass().getVersion());
+		sb.append('\n');
 		if (member != null && !member.isBlank())
 			sb.append("Focused member: ").append(member).append('\n');
 		sb.append("Opened in Recaf UI: ").append(opened != null ? "yes" : "no").append('\n');
