@@ -89,11 +89,11 @@ public class RecafApplication extends Application {
 		// Register main window
 		windowManager.register(WindowManager.WIN_MAIN, stage);
 
-		// Start the AI/MCP bridge so external agents can drive this instance.
-		recaf.get(McpAssistant.class).initialize();
-
-		// Publish UI init event
+		// Publish UI init event, then start the AI/MCP bridge.
+		// The bridge has to come last: it opens its own window, and doing that while the docking layout
+		// is still being built makes the UI come up half initialized.
 		recaf.getContainer().getBeanContainer().getEvent().fire(new UiInitializationEvent());
+		recaf.get(McpAssistant.class).initialize();
 	}
 
 }
