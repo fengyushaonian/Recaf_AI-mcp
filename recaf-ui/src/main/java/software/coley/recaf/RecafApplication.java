@@ -6,6 +6,7 @@ import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.stage.Stage;
 import software.coley.recaf.cdi.UiInitializationEvent;
+import software.coley.recaf.mcp.McpAssistant;
 import software.coley.recaf.services.navigation.NavigationHistoryService;
 import software.coley.recaf.services.navigation.NavigationManager;
 import software.coley.recaf.services.window.WindowManager;
@@ -87,6 +88,9 @@ public class RecafApplication extends Application {
 
 		// Register main window
 		windowManager.register(WindowManager.WIN_MAIN, stage);
+
+		// Start the AI/MCP bridge so external agents can drive this instance.
+		recaf.get(McpAssistant.class).initialize();
 
 		// Publish UI init event
 		recaf.getContainer().getBeanContainer().getEvent().fire(new UiInitializationEvent());

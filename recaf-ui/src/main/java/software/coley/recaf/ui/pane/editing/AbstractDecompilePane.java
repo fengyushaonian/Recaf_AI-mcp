@@ -218,6 +218,16 @@ public class AbstractDecompilePane extends BorderPane implements ClassNavigable,
 		return path;
 	}
 
+	/**
+	 * @return The text editor showing the decompiled content.
+	 * Exposed so that integrations <i>(Such as the MCP bridge)</i> can inspect the user's
+	 * caret position and selection.
+	 */
+	@Nonnull
+	public Editor getEditor() {
+		return editor;
+	}
+
 	@Override
 	public void requestFocus(@Nonnull ClassMember member) {
 		contextActionSupport.select(member);

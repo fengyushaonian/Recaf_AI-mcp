@@ -8,6 +8,7 @@ import javafx.stage.Stage;
 import org.kordamp.ikonli.carbonicons.CarbonIcons;
 import org.slf4j.Logger;
 import software.coley.recaf.analytics.logging.Logging;
+import software.coley.recaf.mcp.McpAssistant;
 import software.coley.recaf.services.tutorial.TutorialWorkspaceBuilder;
 import software.coley.recaf.services.window.WindowManager;
 import software.coley.recaf.services.workspace.WorkspaceManager;
@@ -16,6 +17,7 @@ import software.coley.recaf.ui.control.FontIconView;
 import software.coley.recaf.ui.window.ConfigWindow;
 import software.coley.recaf.util.DesktopUtil;
 import software.coley.recaf.util.Icons;
+import software.coley.recaf.util.Menus;
 import software.coley.recaf.util.threading.ThreadUtil;
 
 import java.net.URI;
@@ -35,20 +37,25 @@ public class HelpMenu extends Menu {
 	private final WorkspaceManager workspaceManager;
 	private final WindowManager windowManager;
 	private final KeybindingConfig keybindingConfig;
+	private final McpAssistant mcpAssistant;
 
 	@Inject
 	public HelpMenu(@Nonnull WindowManager windowManager,
 	                @Nonnull WorkspaceManager workspaceManager,
 	                @Nonnull TutorialWorkspaceBuilder tutorialWorkspaceBuilder,
-	                @Nonnull KeybindingConfig keybindingConfig) {
+	                @Nonnull KeybindingConfig keybindingConfig,
+	                @Nonnull McpAssistant mcpAssistant) {
 		this.tutorialWorkspaceBuilder = tutorialWorkspaceBuilder;
 		this.workspaceManager = workspaceManager;
 		this.windowManager = windowManager;
 		this.keybindingConfig = keybindingConfig;
+		this.mcpAssistant = mcpAssistant;
 
 		textProperty().bind(getBinding("menu.help"));
 		setGraphic(new FontIconView(CarbonIcons.HELP));
 
+		getItems().add(Menus.actionLiteral("AI Assistant (MCP)", CarbonIcons.FLASH_FILLED, mcpAssistant::showWindow));
+		getItems().add(Menus.separator());
 		getItems().add(action("menu.help.sysinfo", CarbonIcons.INFORMATION, this::openSystem));
 		getItems().add(action("menu.help.tutorial", CarbonIcons.PEDESTRIAN_CHILD, this::openTutorial));
 		getItems().add(action("menu.help.shortcuts", CarbonIcons.KEYBOARD, this::openKeyboardShortcuts));

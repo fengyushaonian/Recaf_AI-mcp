@@ -1,0 +1,48 @@
+name: Build Windows jar
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build runnable jar (JavaFX bundled)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '22'
+          check-latest: true
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      # JavaFX is bundled (no -Dskip_jfx_bundle) so the resulting jar runs with a plain `java -jar`.
+      - name: Build distribution jar
+        shell: pwsh
+        run: .\gradlew.bat --no-daemon --stacktrace assemble -x test
+
+      - name: Locate jar
+        shell: pwsh
+        run: Get-ChildItem recaf-ui\build\libs\
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: recaf-ai-mcp-windows
+          retention-days: 30
+          if-no-files-found: error
+          path: recaf-ui/build/libs/*-all.jar
