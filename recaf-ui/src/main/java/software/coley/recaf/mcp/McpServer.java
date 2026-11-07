@@ -65,6 +65,7 @@ public class McpServer {
 	private HttpServer server;
 	private ExecutorService executor;
 	private volatile boolean running;
+	private volatile int boundPort;
 	private volatile String lastError;
 
 	public McpServer(@Nonnull McpConfig config,
@@ -75,6 +76,7 @@ public class McpServer {
 		this.platform = platform;
 		this.ui = ui;
 		this.listener = listener;
+		this.boundPort = config.getPort().getValue();
 		registerTools();
 	}
 
@@ -82,21 +84,16 @@ public class McpServer {
 
 	/**
 	 * Starts the HTTP server on the loopback interface.
+	 * <br>
+	 * When the configured port is already taken <i>(For instance by a previously installed MCP plugin)</i>
+	 * the next free port is used instead, so the bridge always comes up.
 	 *
 	 * @throws IOException
-	 * 		When the port cannot be bound.
+	 * 		When no port could be bound.
 	 */
 	public synchronized void start() throws IOException {
 		if (running)
 			return;
-
-		int port = config.getPort().getValue();
-		HttpServer newServer = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 0);
-		newServer.createContext(ENDPOINT_PATH, this::handleMcp);
-		newServer.createContext(SSE_PATH, this::handleSse);
-		newServer.createContext(MESSAGE_PATH, this::handleMessage);
-		newServer.createContext(HEALTH_PATH, this::handleHealth);
-		newServer.createContext("/", this::handleRoot);
 
 		ThreadFactory factory = new ThreadFactory() {
 			private final AtomicInteger counter = new AtomicInteger();
@@ -108,16 +105,40 @@ public class McpServer {
 				return thread;
 			}
 		};
-		ExecutorService newExecutor = Executors.newCachedThreadPool(factory);
-		newServer.setExecutor(newExecutor);
-		newServer.start();
 
-		server = newServer;
-		executor = newExecutor;
-		running = true;
-		lastError = null;
-		logger.info("Recaf MCP server listening on {}", getEndpoint());
-		listener.onStateChanged(true, getEndpoint(), null);
+		int requested = config.getPort().getValue();
+		IOException failure = null;
+		for (int offset = 0; offset < 10; offset++) {
+			int candidate = requested + offset;
+			HttpServer newServer;
+			try {
+				newServer = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), candidate), 0);
+			} catch (IOException ex) {
+				failure = ex;
+				continue;
+			}
+
+			newServer.createContext(ENDPOINT_PATH, this::handleMcp);
+			newServer.createContext(SSE_PATH, this::handleSse);
+			newServer.createContext(MESSAGE_PATH, this::handleMessage);
+			newServer.createContext(HEALTH_PATH, this::handleHealth);
+			newServer.createContext("/", this::handleRoot);
+
+			ExecutorService newExecutor = Executors.newCachedThreadPool(factory);
+			newServer.setExecutor(newExecutor);
+			newServer.start();
+
+			server = newServer;
+			executor = newExecutor;
+			boundPort = candidate;
+			running = true;
+			lastError = null;
+			logger.info("Recaf MCP server listening on {}", getEndpoint());
+			listener.onStateChanged(true, getEndpoint(), null);
+			return;
+		}
+
+		throw failure == null ? new IOException("No free port available") : failure;
 	}
 
 	/**
@@ -156,7 +177,7 @@ public class McpServer {
 	}
 
 	public int getPort() {
-		return config.getPort().getValue();
+		return boundPort;
 	}
 
 	@Nonnull

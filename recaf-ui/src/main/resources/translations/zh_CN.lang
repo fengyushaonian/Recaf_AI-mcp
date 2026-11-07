@@ -957,3 +957,11 @@ tutorial.5.finished=右键点击该方法的返回类型"Chapter6",然后选择"
 tutorial.6.class=当你右键点击某个类、字段或方法时,可以使用查看哪些代码引用你所选的内容.\n\n - 类：搜索 > 类型/成员引用\n - 字段：字段引用\n - 方法：方法引用\n\n你可以在界面顶部菜单栏的"搜索"菜单中找到这些搜索选项,还有字符串和数字文字等搜索功能.
 tutorial.6.method=试着搜索一下有哪些引用了这种方法.
 tutorial.7.class=恭喜,教程到此结束!\n\n\n最后按[Control+S]标记教程已完成.\n\n教程后续会添加更多内容,但这应该涵盖了你普通使用场景中所有最重要的功能.与此同时,你可以自己探索其他功能!
+## AI / MCP 桥接
+service.ai-mcp=AI / MCP 桥接
+service.ai-mcp.enabled=启用 MCP 服务
+service.ai-mcp.port=服务端口
+service.ai-mcp.auto-show-window=启动时显示活动窗口
+service.ai-mcp.open-viewed-classes=AI 查看类时自动打开标签页
+service.ai-mcp.track-selection=向 AI 报告光标与选区
+service.ai-mcp.access-token=访问令牌（可选）

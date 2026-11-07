@@ -1475,3 +1475,12 @@ tutorial.5.finished=Right click on this method's return type "Chapter6" and sele
 tutorial.6.class=When you right click on a class, field, or method you can use see what other code references the thing you've selected.\n\n - Classes: Search > Type/member references\n - Fields: Field references\n - Methods: Method references\n\nYou can find these search options in the menu bar's 'Search' menu at the top of the UI, along with other things like searching for Strings and number literals.
 tutorial.6.method=Try searching for what references this method.
 tutorial.7.class=Congrats, this is the end of the tutorial!\n\nPress [Control + S] one last time to mark the tutorial as completed.\n\nMore will be added to the tutorial later, but this should cover all of the most important features for your average use case. In the meantime, feel free to explore other features on your own!
+
+## AI / MCP bridge
+service.ai-mcp=AI / MCP bridge
+service.ai-mcp.enabled=Enable the MCP server
+service.ai-mcp.port=Server port
+service.ai-mcp.auto-show-window=Show the activity window on launch
+service.ai-mcp.open-viewed-classes=Open classes the agent inspects
+service.ai-mcp.track-selection=Report caret and selection to the agent
+service.ai-mcp.access-token=Access token (optional)

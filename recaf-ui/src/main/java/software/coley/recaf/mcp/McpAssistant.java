@@ -108,7 +108,11 @@ public class McpAssistant implements McpServer.Listener {
 				server.start();
 				running.set(true);
 				endpoint.set(server.getEndpoint());
-				statusMessage.set("Listening");
+				int requested = config.getPort().getValue();
+				if (server.getPort() != requested)
+					statusMessage.set("Listening on port " + server.getPort() + " (port " + requested + " was busy)");
+				else
+					statusMessage.set("Listening");
 			} catch (Throwable t) {
 				logger.error("Failed to start the MCP server", t);
 				running.set(false);
@@ -227,7 +231,8 @@ public class McpAssistant implements McpServer.Listener {
 	@Nonnull
 	public String clientConfig() {
 		String token = config.getAccessToken().getValue();
-		String url = "http://127.0.0.1:" + config.getPort().getValue() + McpServer.ENDPOINT_PATH;
+		int port = server.isRunning() ? server.getPort() : config.getPort().getValue();
+		String url = "http://127.0.0.1:" + port + McpServer.ENDPOINT_PATH;
 		StringBuilder sb = new StringBuilder();
 		sb.append("{\n");
 		sb.append("  \"mcpServers\": {\n");
