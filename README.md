@@ -4,6 +4,47 @@
 
 A versatile and easy to use Java and Android bytecode editor. Recaf makes working with compiled Java applications easier. Explore unfamiliar code, analyze obfuscated applications, modify classes without their original source, and export your changes, all through a familiar IDE-like interface.
 
+## AI agent bridge (MCP)
+
+This fork embeds a [Model Context Protocol](https://modelcontextprotocol.io) server into Recaf, so an AI agent can
+read and edit the workspace that is open in the GUI.
+
+- **Nothing is hidden.** Whenever the agent decompiles a class, the same tab is opened in Recaf. The
+  *Help → AI Assistant (MCP)* window shows a live feed of every tool call, the exact source the agent looked at, and
+  the unified diff of every change it applied.
+- **No local builds.** `apply_source` compiles the edited class in-process with `javac` and writes it straight into
+  the workspace. Recaf itself is built by CI, see `.github/workflows/build-windows-jar.yml`.
+
+| Tool | Purpose |
+| --- | --- |
+| `workspace_info` | Resources, class/file counts, compiler availability |
+| `list_classes` / `search_classes` | Find classes by substring or regex |
+| `search_members` | Find fields and methods by name |
+| `open_class` | Decompile a class, open its tab in the GUI, return the source |
+| `current_view` | Report the user's active tab, caret line and selection |
+| `apply_source` | Compile Java source and commit it into the workspace, returns a diff |
+| `get_bytes` / `replace_bytes` | Base64 class file round-trip |
+| `recent_activity` | Recent agent actions |
+
+### Connecting a client
+
+1. Start Recaf. The server binds to `http://127.0.0.1:18765/mcp` (loopback only).
+   Change the port, auto-start or access token in *Config → Service → ai-mcp*.
+2. Open *Help → AI Assistant (MCP)* and press **Copy client config**, then paste the snippet into your MCP client:
+
+```json
+{
+  "mcpServers": {
+    "recaf": {
+      "type": "http",
+      "url": "http://127.0.0.1:18765/mcp"
+    }
+  }
+}
+```
+
+Legacy SSE clients can use `GET http://127.0.0.1:18765/sse` instead.
+
 ## Download
 
 - [Launcher](https://github.com/Col-E/Recaf-Launcher)
