@@ -14,6 +14,7 @@ import javafx.collections.ObservableList;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
 import software.coley.recaf.analytics.logging.Logging;
+import software.coley.recaf.services.assembler.AssemblerPipelineManager;
 import software.coley.recaf.services.compile.JavacCompiler;
 import software.coley.recaf.services.compile.JavacCompilerConfig;
 import software.coley.recaf.services.decompile.DecompilerManager;
@@ -56,6 +57,7 @@ public class McpAssistant implements McpServer.Listener {
 	public McpAssistant(@Nonnull McpConfig config,
 	                    @Nonnull WorkspaceManager workspaceManager,
 	                    @Nonnull DecompilerManager decompilerManager,
+	                    @Nonnull AssemblerPipelineManager pipelineManager,
 	                    @Nonnull JavacCompiler javac,
 	                    @Nonnull JavacCompilerConfig javacConfig,
 	                    @Nonnull WorkspaceSaveService saveService,
@@ -63,7 +65,8 @@ public class McpAssistant implements McpServer.Listener {
 	                    @Nonnull DockingManager dockingManager,
 	                    @Nonnull NavigationManager navigationManager) {
 		this.config = config;
-		this.platform = new McpPlatform(config, workspaceManager, decompilerManager, javac, javacConfig, saveService);
+		this.platform = new McpPlatform(config, workspaceManager, decompilerManager, pipelineManager,
+				javac, javacConfig, saveService);
 		this.ui = new McpUiBridge(platform, actions, dockingManager, navigationManager);
 		this.server = new McpServer(config, platform, ui, this);
 		this.endpoint.set(server.getEndpoint());

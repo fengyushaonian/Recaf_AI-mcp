@@ -20,10 +20,11 @@ read and edit the workspace that is open in the GUI.
 | `workspace_info` | Resources, class/file counts, compiler availability |
 | `list_classes` / `search_classes` | Find classes by substring or regex |
 | `search_members` | Find fields and methods by name |
-| `open_class` | Decompile a class, open its tab in the GUI, return the source |
+| `open_class` | Open a class in the GUI and return Java source (JVM) or Dalvik assembly (APK) |
 | `current_view` | Report the user's active tab, caret line and selection |
 | `apply_source` | Compile Java source and commit it into the workspace, returns a diff |
-| `get_bytes` / `replace_bytes` | Base64 class file round-trip |
+| `get_assembly` / `apply_assembly` | Disassemble / assemble a class (works for JVM and DEX classes) |
+| `get_bytes` / `replace_bytes` | Base64 class file round-trip (JVM only) |
 | `recent_activity` | Recent agent actions |
 
 ### Connecting a client

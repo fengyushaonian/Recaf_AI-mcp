@@ -24,6 +24,7 @@ import software.coley.recaf.ui.control.richtext.Editor;
 import software.coley.recaf.ui.docking.DockingManager;
 import software.coley.recaf.ui.pane.editing.AbstractDecompilePane;
 import software.coley.recaf.ui.pane.editing.ClassPane;
+import software.coley.recaf.ui.pane.editing.assembler.AssemblerPane;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -73,8 +74,24 @@ public class McpUiBridge {
 		if (path == null)
 			return null;
 		String className = path.getValue().getName();
+		boolean isAndroid = path.getValue().isAndroidClass();
 		boolean opened = McpFx.runAndWait(() -> {
 			try {
+				// DEX classes have no Java decompiler in this build, so show the assembler view instead.
+				// That is also the only view where the user can edit along with the agent.
+				if (isAndroid) {
+					Navigable navigable = actions.openAssembler(path);
+					if (navigable != null) {
+						navigable.requestFocus();
+						if (member != null && !member.isBlank()) {
+							ClassMember target = findMember(path.getValue(), member);
+							if (target != null && navigable instanceof ClassNavigable classNavigable)
+								classNavigable.requestFocus(target);
+						}
+					}
+					return;
+				}
+
 				ClassNavigable navigable = actions.gotoDeclaration(path);
 				if (navigable == null)
 					return;
@@ -193,6 +210,8 @@ public class McpUiBridge {
 			if (display instanceof AbstractDecompilePane decompilePane)
 				return decompilePane.getEditor();
 		}
+		if (node instanceof AssemblerPane assemblerPane)
+			return assemblerPane.getEditor();
 		return null;
 	}
 

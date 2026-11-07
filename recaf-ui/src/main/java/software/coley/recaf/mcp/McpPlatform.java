@@ -4,8 +4,14 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
+import me.darknet.assembler.ast.ASTElement;
+import me.darknet.assembler.compiler.ClassResult;
+import me.darknet.assembler.error.Diagnostic;
+import me.darknet.assembler.error.Outcome;
+import me.darknet.assembler.parser.Token;
 import org.objectweb.asm.ClassReader;
 import org.slf4j.Logger;
+import software.coley.collections.Unchecked;
 import software.coley.recaf.analytics.logging.Logging;
 import software.coley.recaf.info.ClassInfo;
 import software.coley.recaf.info.JvmClassInfo;
@@ -13,6 +19,8 @@ import software.coley.recaf.info.builder.JvmClassInfoBuilder;
 import software.coley.recaf.info.member.FieldMember;
 import software.coley.recaf.info.member.MethodMember;
 import software.coley.recaf.path.ClassPathNode;
+import software.coley.recaf.services.assembler.AssemblerPipeline;
+import software.coley.recaf.services.assembler.AssemblerPipelineManager;
 import software.coley.recaf.services.compile.CompileMap;
 import software.coley.recaf.services.compile.CompilerDiagnostic;
 import software.coley.recaf.services.compile.CompilerResult;
@@ -25,11 +33,13 @@ import software.coley.recaf.services.workspace.WorkspaceManager;
 import software.coley.recaf.util.JavaVersion;
 import software.coley.recaf.workspace.WorkspaceSaveService;
 import software.coley.recaf.workspace.model.Workspace;
+import software.coley.recaf.workspace.model.bundle.Bundle;
 import software.coley.recaf.workspace.model.bundle.JvmClassBundle;
 import software.coley.recaf.workspace.model.resource.WorkspaceResource;
 
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,6 +47,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
+import java.util.stream.Collectors;
 
 /**
  * Workspace-facing operations exposed to AI agents.
@@ -53,6 +64,7 @@ public class McpPlatform {
 	private final McpConfig config;
 	private final WorkspaceManager workspaceManager;
 	private final DecompilerManager decompilerManager;
+	private final AssemblerPipelineManager pipelineManager;
 	private final JavacCompiler javac;
 	private final JavacCompilerConfig javacConfig;
 	private final WorkspaceSaveService saveService;
@@ -60,12 +72,14 @@ public class McpPlatform {
 	public McpPlatform(@Nonnull McpConfig config,
 	                   @Nonnull WorkspaceManager workspaceManager,
 	                   @Nonnull DecompilerManager decompilerManager,
+	                   @Nonnull AssemblerPipelineManager pipelineManager,
 	                   @Nonnull JavacCompiler javac,
 	                   @Nonnull JavacCompilerConfig javacConfig,
 	                   @Nonnull WorkspaceSaveService saveService) {
 		this.config = config;
 		this.workspaceManager = workspaceManager;
 		this.decompilerManager = decompilerManager;
+		this.pipelineManager = pipelineManager;
 		this.javac = javac;
 		this.javacConfig = javacConfig;
 		this.saveService = saveService;
@@ -219,13 +233,38 @@ public class McpPlatform {
 					: decompilerManager.decompile(workspace, info.asAndroidClass()).get(45, TimeUnit.SECONDS);
 			String text = result.getText();
 			if (text == null)
-				return new SourceView(info, null, result.getException());
+				return new SourceView(info, null, decompileFailure(info, result));
 			if (text.length() > MAX_SOURCE_CHARS)
 				text = text.substring(0, MAX_SOURCE_CHARS) + "\n// ... truncated by Recaf MCP ...";
 			return new SourceView(info, text, null);
 		} catch (Exception ex) {
 			return new SourceView(info, null, ex);
 		}
+	}
+
+	/**
+	 * Builds a human readable explanation for an empty decompilation result.
+	 *
+	 * @param info
+	 * 		Class that was decompiled.
+	 * @param result
+	 * 		Result that did not contain any text.
+	 *
+	 * @return Explanation.
+	 */
+	@Nonnull
+	private Exception decompileFailure(@Nonnull ClassInfo info, @Nonnull DecompileResult result) {
+		if (result.getException() != null)
+			return new IllegalStateException(result.getException().toString(), result.getException());
+
+		String decompilerName = info.isJvmClass()
+				? decompilerManager.getTargetJvmDecompiler().getName()
+				: decompilerManager.getTargetAndroidDecompiler().getName();
+		String hint = info.isAndroidClass()
+				? " No Android/Dalvik decompiler is bundled in this build, so DEX classes are only available as Dalvik assembly. Use 'get_assembly' / 'apply_assembly' instead."
+				: "";
+		return new IllegalStateException("Decompiler '" + decompilerName + "' produced no output (" +
+				result.getType() + ")." + hint);
 	}
 
 	/**
@@ -252,6 +291,40 @@ public class McpPlatform {
 		return McpToolResult.ok(GSON.toJson(result));
 	}
 
+	/**
+	 * Disassembles the given class into Recaf's assembler format.
+	 * <p>
+	 * This works for both JVM classes and Android/DEX classes, and is the only readable representation of
+	 * DEX classes since this build does not bundle a Java decompiler for Dalvik.
+	 *
+	 * @param name
+	 * 		Class name.
+	 *
+	 * @return Disassembled text, or {@code null} when the class is not in the workspace.
+	 */
+	@Nullable
+	public AssemblyView assembly(@Nonnull String name) {
+		ClassPathNode path = resolve(name);
+		if (path == null)
+			return null;
+
+		ClassInfo info = path.getValue();
+		try {
+			AssemblerPipeline<?, ?, ?> pipeline = pipelineManager.getPipeline(path);
+			Outcome<String> outcome = pipeline.disassemble(path);
+			if (outcome.isSuccess()) {
+				String text = outcome.requireValue();
+				if (text != null && text.length() > MAX_SOURCE_CHARS)
+					text = text.substring(0, MAX_SOURCE_CHARS) + "\n// ... truncated by Recaf MCP ...";
+				return new AssemblyView(info, text, "");
+			}
+			return new AssemblyView(info, null, formatDiagnostics(outcome.diagnostics()));
+		} catch (Throwable t) {
+			logger.error("Disassembly of '{}' failed", info.getName(), t);
+			return new AssemblyView(info, null, t.toString());
+		}
+	}
+
 	// ================================================================== mutations
 
 	/**
@@ -271,7 +344,7 @@ public class McpPlatform {
 			return McpToolResult.fail("Class not found in workspace: " + name);
 		if (!path.getValue().isJvmClass())
 			return McpToolResult.fail("'" + name + "' is an Android/DEX class. Java source recompilation is only " +
-					"supported for JVM classes. Use the Android assembler tab in Recaf for this class.");
+					"supported for JVM classes. Use 'get_assembly' + 'apply_assembly' for this class instead.");
 		if (!JavacCompiler.isAvailable())
 			return McpToolResult.fail("No 'javac' compiler available in this runtime. Use 'replace_bytes' instead.");
 
@@ -354,6 +427,85 @@ public class McpPlatform {
 	}
 
 	/**
+	 * Assembles the given assembler text <i>(JVM bytecode or Dalvik, whichever matches the class)</i>
+	 * and writes the result into the workspace.
+	 * <p>
+	 * No external compiler is involved, so this works for Android/DEX classes too.
+	 *
+	 * @param name
+	 * 		Class name.
+	 * @param text
+	 * 		Full assembler text for the class.
+	 *
+	 * @return Result containing a diff of the change, or assembler diagnostics on failure.
+	 */
+	@Nonnull
+	public McpToolResult applyAssembly(@Nonnull String name, @Nonnull String text) {
+		ClassPathNode path = resolve(name);
+		if (path == null)
+			return McpToolResult.fail("Class not found in workspace: " + name);
+
+		ClassInfo info = path.getValue();
+		Workspace workspace = path.getValueOfType(Workspace.class);
+		Object bundle = path.getValueOfType(Bundle.class);
+		if (workspace == null || bundle == null)
+			return McpToolResult.fail("Incomplete workspace path for class: " + name);
+
+		// Snapshot the previous text so we can show a diff.
+		String before = "";
+		try {
+			Outcome<String> prior = pipelineManager.getPipeline(path).disassemble(path);
+			if (prior.isSuccess())
+				before = prior.requireValue();
+		} catch (Throwable ignored) {
+			// Not fatal, the diff will just be against an empty document.
+		}
+
+		ClassInfo assembled;
+		try {
+			AssemblerPipeline<?, ?, ?> pipeline = pipelineManager.getPipeline(path);
+			Outcome<List<Token>> tokenized = pipeline.tokenize(text, info.getName());
+			if (!tokenized.isSuccess())
+				return McpToolResult.fail("Assembler tokenization failed:\n" + formatDiagnostics(tokenized.diagnostics()));
+
+			Outcome<List<ASTElement>> parsed = pipeline.fullParse(tokenized.requireValue());
+			if (!parsed.isSuccess())
+				return McpToolResult.fail("Assembler parse failed:\n" + formatDiagnostics(parsed.diagnostics()));
+
+			Outcome<? extends ClassResult<?>> outcome = pipeline.assemble(parsed.requireValue(), path);
+			if (!outcome.isSuccess())
+				return McpToolResult.fail("Assembler failed:\n" + formatDiagnostics(outcome.diagnostics()));
+
+			ClassResult<?> result = outcome.requireValue();
+			assembled = classInfoFromRepresentation(pipeline, result.representation());
+			if (assembled == null)
+				return McpToolResult.fail("Assembler produced no class representation.");
+		} catch (Throwable t) {
+			logger.error("Assembly of '{}' failed", info.getName(), t);
+			return McpToolResult.fail("Assembly threw an exception: " + t);
+		}
+
+		if (!assembled.getName().equals(info.getName()))
+			return McpToolResult.fail("Renaming classes through the assembler is not supported. " +
+					"Expected '" + info.getName() + "' but got '" + assembled.getName() + "'.");
+
+		boolean committed = commitOnFx(workspace, bundle, assembled);
+		if (!committed)
+			return McpToolResult.fail("Failed to apply changes on the UI thread.");
+
+		McpDiff.Result diff = McpDiff.diff(before, text);
+		Map<String, Object> response = new LinkedHashMap<>();
+		response.put("status", "ok");
+		response.put("summary", "Assembled " + info.getName() + " (+" + diff.added() + "/-" + diff.removed() + ")");
+		response.put("class", info.getName());
+		response.put("kind", info.isJvmClass() ? "jvm" : "android");
+		response.put("addedLines", diff.added());
+		response.put("removedLines", diff.removed());
+		response.put("diff", diff.text());
+		return McpToolResult.ok(GSON.toJson(response));
+	}
+
+	/**
 	 * Replaces the raw bytecode of a class, without any compilation step.
 	 *
 	 * @param name
@@ -377,7 +529,7 @@ public class McpPlatform {
 			return McpToolResult.fail("Class not found in workspace: " + name);
 		if (!path.getValue().isJvmClass())
 			return McpToolResult.fail("'" + name + "' is an Android/DEX class. Raw JVM bytecode replacement is not " +
-					"applicable. Use the Android assembler tab in Recaf for this class.");
+					"applicable. Use 'get_assembly' + 'apply_assembly' for this class instead.");
 
 		JvmClassInfo info = path.getValue().asJvmClass();
 		Workspace workspace = path.getValueOfType(Workspace.class);
@@ -473,6 +625,60 @@ public class McpPlatform {
 		return McpFx.runAndWait(runnable);
 	}
 
+	/**
+	 * Commits a class into the workspace bundle on the UI thread.
+	 *
+	 * @param workspace
+	 * 		Containing workspace.
+	 * @param bundle
+	 * 		Bundle to write into.
+	 * @param info
+	 * 		Class to write.
+	 *
+	 * @return {@code true} when the write succeeded.
+	 */
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	private boolean commitOnFx(@Nonnull Workspace workspace, @Nonnull Object bundle, @Nonnull ClassInfo info) {
+		return runOnFxAndWait(() -> saveService.commit(workspace, (Bundle) bundle, info));
+	}
+
+	/**
+	 * Converts an assembler representation into Recaf's class model.
+	 *
+	 * @param pipeline
+	 * 		Pipeline that produced the representation.
+	 * @param representation
+	 * 		Assembler output representation.
+	 *
+	 * @return Class info, or {@code null} when the representation type is unknown.
+	 */
+	@Nullable
+	private static ClassInfo classInfoFromRepresentation(@Nonnull AssemblerPipeline<?, ?, ?> pipeline,
+	                                                    @Nullable Object representation) {
+		if (representation == null)
+			return null;
+		try {
+			return pipeline.getClassInfo(Unchecked.cast(representation));
+		} catch (Throwable t) {
+			return null;
+		}
+	}
+
+	/**
+	 * @param diagnostics
+	 * 		Assembler diagnostics.
+	 *
+	 * @return One line per diagnostic.
+	 */
+	@Nonnull
+	private static String formatDiagnostics(@Nonnull Collection<? extends Diagnostic> diagnostics) {
+		if (diagnostics.isEmpty())
+			return "  (no diagnostics provided)";
+		return diagnostics.stream()
+				.map(diagnostic -> "  " + diagnostic)
+				.collect(Collectors.joining("\n"));
+	}
+
 	@Nonnull
 	private static Map<String, Object> classSummary(@Nonnull ClassInfo info) {
 		Map<String, Object> map = new LinkedHashMap<>();
@@ -532,6 +738,32 @@ public class McpPlatform {
 		 */
 		public boolean isSuccess() {
 			return source != null;
+		}
+
+		/**
+		 * @return {@code true} when the class is a JVM class and not a DEX class.
+		 */
+		public boolean isJvm() {
+			return info.isJvmClass();
+		}
+	}
+
+	/**
+	 * Disassembly outcome for a single class.
+	 *
+	 * @param info
+	 * 		Class that was disassembled.
+	 * @param text
+	 * 		Assembler text, or {@code null} on failure.
+	 * @param error
+	 * 		Diagnostics describing the failure, empty on success.
+	 */
+	public record AssemblyView(@Nonnull ClassInfo info, @Nullable String text, @Nonnull String error) {
+		/**
+		 * @return {@code true} when the assembler text was produced.
+		 */
+		public boolean isSuccess() {
+			return text != null;
 		}
 
 		/**

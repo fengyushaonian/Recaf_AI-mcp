@@ -414,14 +414,16 @@ public class McpServer {
 			2. Use 'list_classes' / 'search_classes' / 'search_members' to locate targets.
 			3. Call 'open_class' before editing. This opens the tab inside Recaf so the human user
 			   can watch exactly which code you are reading.
-			4. Use 'apply_source' with the full updated Java source. It is compiled in-process and
-			   written into the workspace. The response contains a unified diff which is also shown
-			   to the user in the AI activity window. Do not run any external build after editing.
-			5. Use 'get_bytes' / 'replace_bytes' for raw bytecode work that does not require javac.
+			4. For JVM classes use 'apply_source' with the full updated Java source. It is compiled
+			   in-process and written into the workspace. Do not run any external build afterwards.
+			   For Android/DEX classes the only readable form is Dalvik assembly: use 'get_assembly'
+			   and write it back with 'apply_assembly' (no compiler involved).
+			5. Use 'get_bytes' / 'replace_bytes' for raw JVM class file work.
+			Every edit response contains a unified diff which is also shown to the user in the Recaf
+			'AI activity' window, so keep exploration calls focused.
 			Notes:
 			- Class names may be given as 'a.b.C' or 'a/b/C'.
-			- Every tool call is displayed in the Recaf 'AI activity' window with the exact code
-			  being viewed or modified, so avoid unnecessary exploration calls.
+			- Tool calls are displayed live in the Recaf UI, alongside the exact code you read.
 			""";
 
 	@Nonnull
@@ -452,6 +454,8 @@ public class McpServer {
 				case "current_view" -> result = McpToolResult.ok(ui.currentView());
 				case "open_class" -> result = openClass(name, stringArg(arguments, "name", ""), stringArg(arguments, "member", null));
 				case "apply_source" -> result = platform.applySource(stringArg(arguments, "name", ""), stringArg(arguments, "source", ""));
+				case "get_assembly" -> result = getAssembly(stringArg(arguments, "name", ""));
+				case "apply_assembly" -> result = platform.applyAssembly(stringArg(arguments, "name", ""), stringArg(arguments, "text", ""));
 				case "get_bytes" -> result = platform.classBytes(stringArg(arguments, "name", ""));
 				case "replace_bytes" -> result = platform.replaceBytes(stringArg(arguments, "name", ""), stringArg(arguments, "base64", ""));
 				case "recent_activity" -> result = recentActivity(intArg(arguments, "limit", 25));
@@ -485,26 +489,86 @@ public class McpServer {
 		if (name.isBlank())
 			return McpToolResult.fail("Missing 'name' argument.");
 
-		McpPlatform.SourceView view = platform.source(name);
+		// Resolve first so that we know whether to present Java source or Dalvik assembly.
+		software.coley.recaf.path.ClassPathNode path = platform.resolve(name);
+		if (path == null)
+			return McpToolResult.fail("Class not found in workspace: " + name);
+
+		if (!path.getValue().isJvmClass()) {
+			McpPlatform.AssemblyView assembly = platform.assembly(path.getValue().getName());
+			if (assembly == null)
+				return McpToolResult.fail("Class not found in workspace: " + name);
+			if (!assembly.isSuccess())
+				return McpToolResult.fail("Failed to disassemble '" + assembly.info().getName() + "':\n" + assembly.error());
+
+			String opened = ui.openClass(assembly.info().getName(), member);
+			StringBuilder sb = new StringBuilder();
+			appendClassHeader(sb, assembly.info(), opened, member);
+			sb.append("Format: Dalvik assembly (no Java decompiler is bundled for DEX classes; ")
+					.append("edit with 'apply_assembly')\n");
+			sb.append("----------------------------------------------------------------\n");
+			sb.append(assembly.text());
+			return McpToolResult.ok(sb.toString());
+		}
+
+		McpPlatform.SourceView view = platform.source(path.getValue().getName());
 		if (view == null)
 			return McpToolResult.fail("Class not found in workspace: " + name);
 		if (!view.isSuccess())
-			return McpToolResult.fail("Failed to decompile '" + name + "': " + view.error());
+			return McpToolResult.fail("Failed to decompile '" + view.info().getName() + "': " + view.error());
 
 		String opened = ui.openClass(view.info().getName(), member);
 		StringBuilder sb = new StringBuilder();
-		sb.append("Class: ").append(view.info().getName()).append('\n');
-		sb.append("Fields: ").append(view.info().getFields().size())
-				.append(", Methods: ").append(view.info().getMethods().size())
-				.append(", Kind: ").append(view.isJvm() ? "jvm" : "android");
-		if (view.isJvm())
-			sb.append(", Version: ").append(view.info().asJvmClass().getVersion());
+		appendClassHeader(sb, view.info(), opened, member);
+		sb.append("----------------------------------------------------------------\n");
+		sb.append(view.source());
+		return McpToolResult.ok(sb.toString());
+	}
+
+	/**
+	 * Appends the shared class header block.
+	 *
+	 * @param sb
+	 * 		Builder to append to.
+	 * @param info
+	 * 		Class being shown.
+	 * @param opened
+	 * 		Name of the class opened in the UI, or {@code null}.
+	 * @param member
+	 * 		Optional focused member name.
+	 */
+	private static void appendClassHeader(@Nonnull StringBuilder sb,
+	                                      @Nonnull software.coley.recaf.info.ClassInfo info,
+	                                      @Nullable String opened,
+	                                      @Nullable String member) {
+		sb.append("Class: ").append(info.getName()).append('\n');
+		sb.append("Fields: ").append(info.getFields().size())
+				.append(", Methods: ").append(info.getMethods().size())
+				.append(", Kind: ").append(info.isJvmClass() ? "jvm" : "android");
+		if (info.isJvmClass())
+			sb.append(", Version: ").append(info.asJvmClass().getVersion());
 		sb.append('\n');
 		if (member != null && !member.isBlank())
 			sb.append("Focused member: ").append(member).append('\n');
 		sb.append("Opened in Recaf UI: ").append(opened != null ? "yes" : "no").append('\n');
+	}
+
+	@Nonnull
+	private McpToolResult getAssembly(@Nonnull String name) {
+		if (name.isBlank())
+			return McpToolResult.fail("Missing 'name' argument.");
+
+		McpPlatform.AssemblyView assembly = platform.assembly(name);
+		if (assembly == null)
+			return McpToolResult.fail("Class not found in workspace: " + name);
+		if (!assembly.isSuccess())
+			return McpToolResult.fail("Failed to disassemble '" + assembly.info().getName() + "':\n" + assembly.error());
+
+		StringBuilder sb = new StringBuilder();
+		appendClassHeader(sb, assembly.info(), null, null);
+		sb.append("Format: ").append(assembly.isJvm() ? "JVM assembler" : "Dalvik assembler").append('\n');
 		sb.append("----------------------------------------------------------------\n");
-		sb.append(view.source());
+		sb.append(assembly.text());
 		return McpToolResult.ok(sb.toString());
 	}
 
@@ -540,7 +604,7 @@ public class McpServer {
 				summary = "Viewing " + target;
 				detail = result.error() ? result.text() : truncate(result.text(), 60_000);
 			}
-			case "apply_source", "replace_bytes" -> {
+			case "apply_source", "apply_assembly", "replace_bytes" -> {
 				kind = McpActivity.KIND_EDIT;
 				String diff = "";
 				String message = "";
@@ -556,7 +620,7 @@ public class McpServer {
 				summary = result.error() ? "Edit failed: " + target : (message.isEmpty() ? "Modified " + target : message);
 				detail = result.error() ? result.text() : diff;
 			}
-			case "get_bytes", "list_classes", "search_classes", "search_members",
+			case "get_bytes", "get_assembly", "list_classes", "search_classes", "search_members",
 				 "workspace_info", "current_view", "recent_activity" -> {
 				kind = McpActivity.KIND_QUERY;
 				summary = tool + (target.isEmpty() ? "" : ": " + target);
@@ -603,7 +667,7 @@ public class McpServer {
 						},"required":["query"],"additionalProperties":false}
 						"""));
 		tools.add(tool("open_class",
-				"Decompile a class AND open its tab inside the Recaf window so the human user can see exactly which code you are reading. Always call this before editing a class.",
+				"Open a class inside the Recaf window so the human user can see exactly which code you are reading, and return its readable form: Java source for JVM classes, Dalvik assembly for Android/DEX classes (this build has no DEX decompiler). Always call this before editing a class.",
 				"""
 						{"type":"object","properties":{
 						  "name":{"type":"string","description":"Class name, dotted ('a.b.C') or internal ('a/b/C')."},
@@ -622,6 +686,21 @@ public class McpServer {
 						  "name":{"type":"string","description":"Class name being replaced."},
 						  "source":{"type":"string","description":"Complete Java source of the class."}
 						},"required":["name","source"],"additionalProperties":false}
+						"""));
+		tools.add(tool("get_assembly",
+				"Disassemble a class into Recaf's assembler format (JVM assembler, or Dalvik assembler for Android/DEX classes). This is the only readable form for APK classes in this build, and is required before using 'apply_assembly'.",
+				"""
+						{"type":"object","properties":{
+						  "name":{"type":"string","description":"Class name."}
+						},"required":["name"],"additionalProperties":false}
+						"""));
+		tools.add(tool("apply_assembly",
+				"Assemble the given assembler text and write the resulting class back into the workspace. Works for JVM classes and Android/DEX classes. No external compiler or local build is involved. Returns a unified diff which is also shown to the user.",
+				"""
+						{"type":"object","properties":{
+						  "name":{"type":"string","description":"Class name being modified."},
+						  "text":{"type":"string","description":"Complete assembler text of the class (as produced by get_assembly, with your edits applied)."}
+						},"required":["name","text"],"additionalProperties":false}
 						"""));
 		tools.add(tool("get_bytes",
 				"Read the raw class file bytes as base64.",
